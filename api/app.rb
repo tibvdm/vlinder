@@ -71,12 +71,19 @@ class Vlinder < ROM::Relation[:sql]
     attribute :StationID, Types::String
   end
 
+  # Sequel's trilogy adapter raises a plain DatabaseError when the server closed the connection
+  module ClosedConnection
+    def self.===(error)
+      error.is_a?(Sequel::DatabaseError) && error.cause.is_a?(Trilogy::ConnectionError)
+    end
+  end
+
   def retry_until_succeeded(&block)
     tries = 0
     begin
       # run against the current $vlinder so a reconnect takes effect on retry
       $vlinder.instance_exec(&block)
-    rescue Sequel::DatabaseConnectionError, Sequel::DatabaseDisconnectError => e
+    rescue Sequel::DatabaseConnectionError, Sequel::DatabaseDisconnectError, ClosedConnection => e
       tries += 1
       raise unless tries < DB_MAX_RETRIES
 

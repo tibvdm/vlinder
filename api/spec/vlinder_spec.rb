@@ -184,6 +184,61 @@ RSpec.describe Vlinder do
     end
   end
 
+  describe '#retry_until_succeeded' do
+    # a Sequel::DatabaseError caused by the given exception, as the adapter raises it
+    def database_error(cause)
+      raise cause
+    rescue StandardError
+      begin
+        raise Sequel::DatabaseError, cause.message
+      rescue Sequel::DatabaseError => e
+        e
+      end
+    end
+
+    around do |example|
+      saved = $vlinder
+      example.run
+      $vlinder = saved
+    end
+
+    before { allow(vlinder).to receive(:warn) }
+
+    it 'reconnects and retries when the server closed the connection' do
+      error = database_error(Trilogy::EOFError.new('trilogy_query_send: TRILOGY_CLOSED_CONNECTION'))
+      calls = 0
+      $vlinder = Object.new
+      allow(vlinder).to receive(:reconnect_database) { $vlinder }
+
+      result = vlinder.retry_until_succeeded do
+        calls += 1
+        raise error if calls == 1
+
+        :rows
+      end
+
+      expect(result).to eq(:rows)
+      expect(vlinder).to have_received(:reconnect_database).once
+    end
+
+    it 'retries without a reconnect after another database error' do
+      error = database_error(Trilogy::QueryError.new('syntax error'))
+      calls = 0
+      $vlinder = Object.new
+      allow(vlinder).to receive(:reconnect_database)
+
+      result = vlinder.retry_until_succeeded do
+        calls += 1
+        raise error if calls == 1
+
+        :rows
+      end
+
+      expect(result).to eq(:rows)
+      expect(vlinder).not_to have_received(:reconnect_database)
+    end
+  end
+
   # stubbing the query layer lets the real methods run without a live DB
   describe '#all_stations' do
     it 'returns an empty, non-crashing result when the lookback window has no rows yet' do
